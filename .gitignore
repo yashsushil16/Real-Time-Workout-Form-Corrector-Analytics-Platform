@@ -1,0 +1,42 @@
+# Virtual environments
+test_venv/
+venv/
+.venv/
+ENV/
+
+# Node modules & frontend builds
+node_modules/
+dist/
+.svelte-kit/
+.next/
+
+# YOLO & MediaPipe Model Weights / Datasets / Training Outputs
+*.pt
+*.task
+runs/
+yolo_train_runs/
+datasets/
+
+# Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases
+backend/gym_corrector.db
+*.db
+*.sqlite
+
+# IDEs & System files
+.vscode/
+.idea/
+.project
+.pydevproject
+.settings/
+.DS_Store
+Thumbs.db
+*.log
