@@ -1,4 +1,4 @@
-# Yash Gym Trainer: Real-Time Workout Form Corrector & Analytics Platform
+# Real-Time Workout Form Corrector & Analytics Platform
 
 **Yash Gym Trainer** is a premium, dual-device web application that transforms your smartphone into a wireless camera and utilizes real-time deep learning (YOLOv8-Pose) to analyze your workout form, count repetitions, provide live corrective coaching, and generate detailed session report cards.
 
