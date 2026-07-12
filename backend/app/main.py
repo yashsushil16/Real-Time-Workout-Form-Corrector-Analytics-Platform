@@ -123,6 +123,9 @@ async def start_workout(sid, data):
         session_id = create_session(exercise)
         fsm = WorkoutFSM(exercise)
         
+        # Reset tracking history to prevent position drift from previous sessions
+        pose_tracker.reset()
+        
         room_sessions[room_id] = {
             "workout_active": True,
             "exercise": exercise,

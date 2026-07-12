@@ -195,10 +195,14 @@ class PoseTracker:
     """
     Pose Tracker: Uses YOLOv8-Pose as primary and MediaPipe Tasks PoseLandmarker as fallback
     to extract body landmarks from OpenCV frames.
+    Implements dynamic Exponential Moving Average (EMA) smoothing and temporal state holds
+    on low-confidence occluded joints to prevent coordinate jitter and line jumping.
     """
     def __init__(self):
         self.yolo_model = None
         self.landmarker = None
+        self.prev_landmarks = None
+        self.smoothing_factor = 0.55  # EMA alpha (lower = smoother, higher = more raw response)
         
         # 1. Initialize YOLOv8-Pose (Primary Tracker)
         if YOLO_AVAILABLE:
@@ -234,6 +238,10 @@ class PoseTracker:
         if self.yolo_model is None and self.landmarker is None:
             print("Both trackers unavailable. Running in simulated pose mode.")
 
+    def reset(self):
+        """Clears tracking filter memory for a clean start on new workouts."""
+        self.prev_landmarks = None
+
     def process_frame(self, image):
         """
         Processes an OpenCV BGR image.
@@ -252,8 +260,11 @@ class PoseTracker:
                         conf = result.keypoints.conf[0].cpu().numpy()  # keypoint confidence scores
                         
                         if np.any(xyn):
-                            # Initialize 33 MediaPipe-compliant landmarks
-                            landmarks = [{'x': 0.5, 'y': 0.5, 'z': 0.0, 'visibility': 0.0} for _ in range(33)]
+                            # Initialize 33 landmarks. Start from previous frame values if available to hold coordinates
+                            if self.prev_landmarks is not None and len(self.prev_landmarks) == 33:
+                                landmarks = [dict(lm) for lm in self.prev_landmarks]
+                            else:
+                                landmarks = [{'x': 0.5, 'y': 0.5, 'z': 0.0, 'visibility': 0.0} for _ in range(33)]
                             
                             # YOLO COCO -> MediaPipe index mapping
                             yolo_to_mp = {
@@ -276,13 +287,52 @@ class PoseTracker:
                                 16: 28, # R Ankle
                             }
                             
+                            # Check for total movement frame-to-frame displacement
+                            # If they made a massive sudden jump (e.g. tracking switched persons), reset temporal hold
+                            if self.prev_landmarks is not None:
+                                displacement = 0.0
+                                count = 0
+                                for yolo_idx, mp_idx in yolo_to_mp.items():
+                                    curr_x = float(xyn[yolo_idx][0])
+                                    curr_y = float(xyn[yolo_idx][1])
+                                    if curr_x != 0.0 or curr_y != 0.0:
+                                        prev_x = self.prev_landmarks[mp_idx]['x']
+                                        prev_y = self.prev_landmarks[mp_idx]['y']
+                                        displacement += np.sqrt((curr_x - prev_x)**2 + (curr_y - prev_y)**2)
+                                        count += 1
+                                if count > 0 and (displacement / count) > 0.3:
+                                    # Large sudden jump detected (person swap or reset) - bypass smoothing to instant match
+                                    self.prev_landmarks = None
+                            
                             for yolo_idx, mp_idx in yolo_to_mp.items():
-                                landmarks[mp_idx] = {
-                                    'x': float(xyn[yolo_idx][0]),
-                                    'y': float(xyn[yolo_idx][1]),
-                                    'z': 0.0,
-                                    'visibility': float(conf[yolo_idx])
-                                }
+                                x_val = float(xyn[yolo_idx][0])
+                                y_val = float(xyn[yolo_idx][1])
+                                confidence = float(conf[yolo_idx])
+                                
+                                # Only update keypoint if it's detected (non-zero) and confidence is sufficient (>0.20)
+                                # This holds the previous valid coordinate if the joint is briefly hidden
+                                if (x_val != 0.0 or y_val != 0.0) and confidence > 0.20:
+                                    if self.prev_landmarks is not None and len(self.prev_landmarks) == 33:
+                                        prev_x = self.prev_landmarks[mp_idx]['x']
+                                        prev_y = self.prev_landmarks[mp_idx]['y']
+                                        
+                                        # Apply low-pass filter (Exponential Moving Average)
+                                        smoothed_x = self.smoothing_factor * x_val + (1 - self.smoothing_factor) * prev_x
+                                        smoothed_y = self.smoothing_factor * y_val + (1 - self.smoothing_factor) * prev_y
+                                        
+                                        landmarks[mp_idx] = {
+                                            'x': smoothed_x,
+                                            'y': smoothed_y,
+                                            'z': 0.0,
+                                            'visibility': confidence
+                                        }
+                                    else:
+                                        landmarks[mp_idx] = {
+                                            'x': x_val,
+                                            'y': y_val,
+                                            'z': 0.0,
+                                            'visibility': confidence
+                                        }
                             
                             # Hand padding (copy Wrist coords)
                             for mp_idx in [17, 19, 21]:
@@ -296,6 +346,7 @@ class PoseTracker:
                             for mp_idx in [30, 32]:
                                 landmarks[mp_idx] = landmarks[28]
                                 
+                            self.prev_landmarks = landmarks
                             return landmarks
             except Exception as e:
                 print(f"YOLOv8-Pose processing error: {e}. Falling back to MediaPipe.")
@@ -309,14 +360,31 @@ class PoseTracker:
                 
                 if results.pose_landmarks and len(results.pose_landmarks) > 0:
                     raw_landmarks = results.pose_landmarks[0]
-                    landmarks = []
-                    for lm in raw_landmarks:
-                        landmarks.append({
-                            'x': lm.x,
-                            'y': lm.y,
-                            'z': lm.z,
-                            'visibility': lm.visibility
-                        })
+                    
+                    if self.prev_landmarks is not None and len(self.prev_landmarks) == 33:
+                        landmarks = [dict(lm) for lm in self.prev_landmarks]
+                    else:
+                        landmarks = [{'x': 0.5, 'y': 0.5, 'z': 0.0, 'visibility': 0.0} for _ in range(33)]
+                    
+                    for idx, lm in enumerate(raw_landmarks):
+                        if lm.visibility > 0.3:
+                            if self.prev_landmarks is not None:
+                                prev_x = self.prev_landmarks[idx]['x']
+                                prev_y = self.prev_landmarks[idx]['y']
+                                landmarks[idx] = {
+                                    'x': self.smoothing_factor * lm.x + (1 - self.smoothing_factor) * prev_x,
+                                    'y': self.smoothing_factor * lm.y + (1 - self.smoothing_factor) * prev_y,
+                                    'z': lm.z,
+                                    'visibility': lm.visibility
+                                }
+                            else:
+                                landmarks[idx] = {
+                                    'x': lm.x,
+                                    'y': lm.y,
+                                    'z': lm.z,
+                                    'visibility': lm.visibility
+                                }
+                    self.prev_landmarks = landmarks
                     return landmarks
             except Exception as e:
                 print(f"MediaPipe Tasks processing error: {e}")
