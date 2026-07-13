@@ -10,7 +10,7 @@ import {
   CheckCircle
 } from 'lucide-react';
 
-const DEFAULT_BACKEND_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
+const BACKEND_URL = `${window.location.protocol}//${window.location.hostname}:8000`;
 
 const EXERCISES = [
   { key: 'squat', label: 'Squats' },
@@ -32,20 +32,14 @@ export default function App() {
     return room || Math.random().toString(36).substring(2, 8).toUpperCase();
   });
 
-  // Get backend URL from query parameter if present, or localStorage, or fall back to default
-  const [backendUrl, setBackendUrl] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const queryBackend = params.get('backend');
-    if (queryBackend) return decodeURIComponent(queryBackend);
-    return localStorage.getItem('yash_backend_url') || DEFAULT_BACKEND_URL;
-  });
-
   const [exercise, setExercise] = useState('squat');
   const [workoutActive, setWorkoutActive] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isSimulation, setIsSimulation] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
   
+  // Local network IP address for pairing QR code
+  const [localIp, setLocalIp] = useState(typeof __DEV_IP__ !== 'undefined' ? __DEV_IP__ : window.location.hostname);
   const [socketId, setSocketId] = useState('');
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
   
@@ -73,11 +67,20 @@ export default function App() {
   // Track if a rep completed for HUD animation
   const [repCompletedTrigger, setRepCompletedTrigger] = useState(false);
 
+  // 1. Fetch backend host IP to construct valid LAN pairing URL
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/ip`)
+      .then(res => res.json())
+      .then(data => {
+        if (data.ip) setLocalIp(data.ip);
+      })
+      .catch(err => console.log("Error fetching local IP:", err));
+  }, []);
 
   // 2. Initialize Socket.IO Client connection
   useEffect(() => {
-    console.log("Connecting to Socket.IO backend:", backendUrl);
-    const socket = io(backendUrl, {
+    console.log("Connecting to Socket.IO backend:", BACKEND_URL);
+    const socket = io(BACKEND_URL, {
       transports: ['websocket'],
       forceNew: true
     });
@@ -191,17 +194,17 @@ export default function App() {
       stopCaptureLoop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backendUrl, exercise, isPhone, urlRoom]);
+  }, [exercise, isPhone, urlRoom]);
 
   // Generate pairing QR code for phone controller
   useEffect(() => {
     if (!isPhone) {
-      const pairingUrl = `${window.location.origin}/?role=phone&room=${roomCode}&backend=${encodeURIComponent(backendUrl)}`;
+      const pairingUrl = `https://${localIp}:5173/?role=phone&room=${roomCode}`;
       QRCode.toDataURL(pairingUrl, { width: 250, margin: 2 })
         .then(url => setQrCodeDataUrl(url))
         .catch(err => console.error("QR Code Generation Error:", err));
     }
-  }, [backendUrl, isPhone, roomCode]);
+  }, [localIp, isPhone, roomCode]);
 
   // Connect video stream to ref once workout becomes active and video element renders
   useEffect(() => {
@@ -213,7 +216,7 @@ export default function App() {
   // Fetch session history list from backend SQLite
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`${backendUrl}/history`);
+      const response = await fetch(`${BACKEND_URL}/history`);
       const data = await response.json();
       if (data.sessions) {
         setHistoryList(data.sessions);
@@ -667,34 +670,8 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '450px', position: 'relative', zIndex: 1 }}>
                 <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-primary)', letterSpacing: '0.5px' }}>DIRECT PAIRING URL</span>
                 <div className="pairing-url-text">
-                  {`${window.location.origin}/?role=phone&room=${roomCode}&backend=${encodeURIComponent(backendUrl)}`}
+                  https://{localIp}:5173/?role=phone&room={roomCode}
                 </div>
-              </div>
-
-              {/* Public Tunnel Configuration Input */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '450px', position: 'relative', zIndex: 1, marginTop: '10px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>Public Backend Tunnel URL (For Cellular / Localtunnel)</span>
-                <input 
-                  type="text"
-                  value={backendUrl}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setBackendUrl(val);
-                    localStorage.setItem('yash_backend_url', val);
-                  }}
-                  placeholder="e.g. https://yash-backend.loca.lt"
-                  style={{
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid var(--border-color)',
-                    fontSize: '12px',
-                    outline: 'none',
-                    fontFamily: 'inherit',
-                    background: 'var(--bg-secondary)',
-                    color: 'var(--text-primary)',
-                    textAlign: 'center'
-                  }}
-                />
               </div>
 
               {!isConnected && (
@@ -702,7 +679,7 @@ export default function App() {
                   <AlertCircle size={16} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'text-bottom' }} />
                   <strong>FastAPI Backend is Offline or Blocked:</strong><br/>
                   1. Double-click <code>start.bat</code> to start uvicorn.<br/>
-                  2. If running, open <a href={backendUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-steel)', textDecoration: 'underline' }}>{backendUrl}</a> in a new tab, click &quot;Advanced&quot;, and choose &quot;Proceed&quot; (unsafe).
+                  2. If running, open <a href={BACKEND_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-steel)', textDecoration: 'underline' }}>{BACKEND_URL}</a> in a new tab, click &quot;Advanced&quot;, and choose &quot;Proceed&quot; (unsafe).
                 </div>
               )}
             </div>
