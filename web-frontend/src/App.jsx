@@ -417,7 +417,7 @@ export default function App() {
               x2={`${ptB.x}%`} 
               y2={`${ptB.y}%`} 
               stroke="#81A6C6" 
-              strokeWidth="1.5" 
+              strokeWidth="0.6" 
               strokeOpacity="0.9"
             />
           );
@@ -429,10 +429,10 @@ export default function App() {
               key={`joint-${jointIdx}`} 
               cx={`${pt.x}%`} 
               cy={`${pt.y}%`} 
-              r="2" 
+              r="0.8" 
               fill="#D2C4B4" 
               stroke="#81A6C6" 
-              strokeWidth="0.6"
+              strokeWidth="0.25"
             />
           );
         })}
